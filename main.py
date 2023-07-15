@@ -2,14 +2,13 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
-
+from pydeck.types import String
 
 agebs = gpd.GeoDataFrame(pd.read_pickle('data/agebs.pkl'))
 organizations = pd.read_pickle('data/organizations.pkl')
 organization_demographics = pd.read_pickle('data/organization_demographics.pkl')
 organization_profiles = pd.read_pickle('data/organization_profiles.pkl')
 organization_regions = pd.read_pickle('data/organization_regions.pkl')
-
 
 ods_labels = {
     'ods1': 'ODS 1',
@@ -101,10 +100,25 @@ organization_sectors = gpd.GeoDataFrame(
 layers = []
 
 if 'Oficinas de organizaciones' in active_modes:
-    organizations[['lat', 'lon']] = organizations[[]]
+    layers.append(
+        pdk.Layer(
+            "TextLayer",
+            data=organizations
+            .filter(items=['name', 'lon', 'lat'])
+            .dropna(subset=['lon', 'lat']),
+            get_position=["lon", "lat"],
+            get_text='🏢',
+            get_size=16,
+            get_color=[0, 0, 0],
+            get_angle=0,
+            get_text_anchor=String("middle"),
+            get_alignment_baseline=String("center"),
+            pickable=True,
+        )
+    )
 if 'Actividad de organizaciones' in active_modes:
-    organization_sectors['lon'] = organization_sectors.centroid.x
-    organization_sectors['lat'] = organization_sectors.centroid.y
+    organization_sectors['lon'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).x
+    organization_sectors['lat'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).y
     layers.append(
         pdk.Layer(
             "HeatmapLayer",
@@ -125,6 +139,23 @@ if 'Ganancias anuales' in active_modes:
         pdk.Layer(
             "ScreenGridLayer",
             data=organization_sectors,
+            get_position=['lon', 'lat'],
+            get_weight='1',
+            cell_size_pixels=20,
+            opacity=0.4,
+
+        )
+    )
+
+if 'Año de incorporación legal' in active_modes:
+    organization_sectors['lon'] = organization_sectors.centroid.x
+    organization_sectors['lat'] = organization_sectors.centroid.y
+    layers.append(
+        pdk.Layer(
+            "ScreenGridLayer",
+            data=organizations
+            .filter(items=['lon', 'lat', 'annual_income'])
+            .dropna(['lon', 'lat']),
             get_position=['lon', 'lat'],
             get_weight='1',
             cell_size_pixels=20,
