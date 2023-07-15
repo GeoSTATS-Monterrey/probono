@@ -5,7 +5,7 @@ import pydeck as pdk
 from pydeck.types import String
 
 agebs = gpd.GeoDataFrame(pd.read_pickle('data/agebs.pkl'))
-organizations = pd.read_pickle('data/organizations.pkl')
+organizations = gpd.GeoDataFrame(pd.read_pickle('data/organizations.pkl'))
 organization_demographics = pd.read_pickle('data/organization_demographics.pkl')
 organization_profiles = pd.read_pickle('data/organization_profiles.pkl')
 organization_regions = pd.read_pickle('data/organization_regions.pkl')
@@ -93,26 +93,32 @@ active_modes = st.multiselect(
 organization_sectors = gpd.GeoDataFrame(
     organizations
     .join(other=organization_regions.set_index('organization_name'), on='name')
-    .dropna(subset='sector_name')
-    .join(other=agebs.set_index('sector_name'), on='sector_name')
+    .dropna(subset=['sector_name', 'lon', 'lat'])
+    .join(other=agebs.set_index('sector_name'), on='sector_name', lsuffix='organizations')
 )
 
 layers = []
 
 if 'Oficinas de organizaciones' in active_modes:
+    organizations_with_icons = organizations \
+        .dropna(subset='address')
+    organizations_with_icons['icon_data'] = None
+    for i in organizations_with_icons.index:
+        organizations_with_icons['icon_data'][i] = {
+            'url': 'https://em-content.zobj.net/thumbs/240/apple/354/office-building_1f3e2.png',
+            'width': 242,
+            'height': 242,
+            'anchorY': 242,
+        }
+
     layers.append(
         pdk.Layer(
-            "TextLayer",
-            data=organizations
-            .filter(items=['name', 'lon', 'lat'])
-            .dropna(subset=['lon', 'lat']),
-            get_position=["lon", "lat"],
-            get_text='🏢',
-            get_size=16,
-            get_color=[0, 0, 0],
-            get_angle=0,
-            get_text_anchor=String("middle"),
-            get_alignment_baseline=String("center"),
+            "IconLayer",
+            data=organizations_with_icons,
+            get_icon='icon_data',
+            get_size=4,
+            size_scale=15,
+            get_position=['lon', 'lat'],
             pickable=True,
         )
     )
@@ -122,14 +128,16 @@ if 'Actividad de organizaciones' in active_modes:
     layers.append(
         pdk.Layer(
             "HeatmapLayer",
-            data=organization_sectors,
+            data=organization_sectors
+            .filter(items=['lon', 'lat'])
+            .dropna(subset=['lon', 'lat']),
             get_position=['lon', 'lat'],
             opacity=0.7,
             intensity=1,
             radius_pixels=100,
             threshold=0.3,
             aggregation='MEAN',
-            get_weight='1',
+            get_weight=1,
         )
     )
 if 'Ganancias anuales' in active_modes:
@@ -138,29 +146,33 @@ if 'Ganancias anuales' in active_modes:
     layers.append(
         pdk.Layer(
             "ScreenGridLayer",
-            data=organization_sectors,
+            data=organizations
+            .filter(items=['annual_income', 'lon', 'lat']),
             get_position=['lon', 'lat'],
             get_weight='1',
             cell_size_pixels=20,
             opacity=0.4,
-
         )
     )
 
 if 'Año de incorporación legal' in active_modes:
     organization_sectors['lon'] = organization_sectors.centroid.x
     organization_sectors['lat'] = organization_sectors.centroid.y
+    H3_CLUSTER_LAYER_DATA = "https://raw.githubusercontent.com/visgl/deck.gl-data/master/website/sf.h3clusters.json"
+
+    df = pd.read_json(H3_CLUSTER_LAYER_DATA)
     layers.append(
         pdk.Layer(
-            "ScreenGridLayer",
-            data=organizations
-            .filter(items=['lon', 'lat', 'annual_income'])
-            .dropna(['lon', 'lat']),
-            get_position=['lon', 'lat'],
-            get_weight='1',
-            cell_size_pixels=20,
-            opacity=0.4,
-
+            "H3ClusterLayer",
+            df,
+            pickable=True,
+            stroked=True,
+            filled=True,
+            extruded=False,
+            get_hexagons="hexIds",
+            get_fill_color="[255, (1 - mean / 500) * 255, 0]",
+            get_line_color=[255, 255, 255],
+            line_width_min_pixels=2,
         )
     )
 
