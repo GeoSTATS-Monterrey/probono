@@ -2,9 +2,10 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
-from pydeck.types import String
+import numpy as np
 
 agebs = gpd.GeoDataFrame(pd.read_pickle('data/agebs.pkl'))
+sectors = agebs.dissolve(by='sector_name', as_index=False)
 organizations = gpd.GeoDataFrame(pd.read_pickle('data/organizations.pkl'))
 organization_demographics = pd.read_pickle('data/organization_demographics.pkl')
 organization_profiles = pd.read_pickle('data/organization_profiles.pkl')
@@ -30,13 +31,16 @@ ods_labels = {
     'ods17': 'ODS 17',
 }
 
+primary_color = [255, 75, 75]
+
 st.title("Mapa de organizaciones pro-bono")
 
 active_modes = st.multiselect(
     'Selecciona la informacion de interes que quieres ver: ', [
         'Oficinas de organizaciones',
         'Actividad de organizaciones',
-        'Año de incorporación legal',
+        'Sectores',
+        'Sectores por organización',
         'Primer año de operaciones',
         'Ganancias anuales',
         'Cantidad de empleados',
@@ -45,7 +49,8 @@ active_modes = st.multiselect(
     ],
     default=[
         'Oficinas de organizaciones',
-        'Actividad de organizaciones'
+        'Actividad de organizaciones',
+        'Sectores'
     ],
 )
 # ods_choice = st.selectbox(
@@ -90,25 +95,80 @@ active_modes = st.multiselect(
 # org_with_regions['color'] = org_with_regions[ods_choice].apply(lambda value: colors[value])
 # st.write(gpd.GeoDataFrame(org_with_regions))
 
-organization_sectors = gpd.GeoDataFrame(
-    organizations
-    .join(other=organization_regions.set_index('organization_name'), on='name')
-    .dropna(subset=['sector_name', 'lon', 'lat'])
-    .join(other=agebs.set_index('sector_name'), on='sector_name', lsuffix='organizations')
+# organization_sectors = gpd.GeoDataFrame(
+#     organizations
+#     .join(other=organization_regions
+#           .dropna(subset='sector_name')
+#           .set_index('organization_name'), on='name')
+# .dropna(subset=['sector_name'])
+# .join(other=agebs.set_index('sector_name'), on='sector_name', lsuffix='organizations')
+# )
+
+organization_agebs = gpd.GeoDataFrame(
+    organization_regions
+    .join(other=agebs.set_index('sector_name'), on='sector_name', how='inner')
+    .join(other=organizations.set_index('name'), on='organization_name', how='inner', rsuffix='_org')
 )
+
+organization_agebs['lon'] = organization_agebs.to_crs('+proj=cea').centroid.to_crs(organization_agebs.crs).x
+organization_agebs['lat'] = organization_agebs.to_crs('+proj=cea').centroid.to_crs(organization_agebs.crs).y
 
 layers = []
 
+if 'Sectores por organización' in active_modes or 'Sectores' in active_modes:
+    if 'Sectores por organización' in active_modes:
+        selected_org = st.selectbox(
+            'Organización a visualizar:',
+            organizations.name
+        )
+        filtered = gpd.GeoDataFrame(
+            organization_agebs[organization_agebs['organization_name'] == selected_org]
+            .filter(items=['geometry', 'sector_name'])
+        )
+        selected_sectors = set(filtered.sector_name.unique())
+        all_sectors = set(agebs.sector_name.unique())
+
+        other_sectors = all_sectors.difference(selected_sectors)
+        other_agebs = gpd.GeoDataFrame(
+            agebs[agebs['sector_name'].isin(other_sectors)]
+        )
+
+        layers.append(
+            pdk.Layer(
+                "GeoJsonLayer",
+                data=other_agebs,
+                get_fill_color=[128, 128, 128],
+                opacity=0.2,
+            )
+        )
+        layers.append(
+            pdk.Layer(
+                "GeoJsonLayer",
+                data=filtered,
+                get_fill_color=primary_color,
+                opacity=0.5
+            )
+        )
+        layers.append(
+            pdk.Layer(
+                "TextLayer",
+                data=sectors.assign(geometry=sectors.centroid),
+                get_position='geometry.coordinates',
+                size_max_pixels=8,
+                get_text='sector_name',
+                get_color=[255, 255, 255],
+            )
+        )
 if 'Oficinas de organizaciones' in active_modes:
     organizations_with_icons = organizations \
         .dropna(subset='address')
     organizations_with_icons['icon_data'] = None
     for i in organizations_with_icons.index:
         organizations_with_icons['icon_data'][i] = {
-            'url': 'https://em-content.zobj.net/thumbs/240/apple/354/office-building_1f3e2.png',
-            'width': 242,
-            'height': 242,
-            'anchorY': 242,
+            'url': 'https://raw.githubusercontent.com/GeoSTATS-Monterrey/probono/main/icons/office-building_1f3e2.png',
+            'width': 128,
+            'height': 128,
+            'anchorY': 128,
         }
 
     layers.append(
@@ -117,37 +177,36 @@ if 'Oficinas de organizaciones' in active_modes:
             data=organizations_with_icons,
             get_icon='icon_data',
             get_size=4,
-            size_scale=15,
+            size_scale=8,
             get_position=['lon', 'lat'],
             pickable=True,
         )
     )
+
 if 'Actividad de organizaciones' in active_modes:
-    organization_sectors['lon'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).x
-    organization_sectors['lat'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).y
     layers.append(
         pdk.Layer(
             "HeatmapLayer",
-            data=organization_sectors
+            data=organization_agebs
             .filter(items=['lon', 'lat'])
             .dropna(subset=['lon', 'lat']),
             get_position=['lon', 'lat'],
             opacity=0.7,
             intensity=1,
             radius_pixels=100,
-            threshold=0.3,
+            threshold=0.2,
             aggregation='MEAN',
             get_weight=1,
+            weights_texture_size=512,
         )
     )
 if 'Ganancias anuales' in active_modes:
-    organization_sectors['lon'] = organization_sectors.centroid.x
-    organization_sectors['lat'] = organization_sectors.centroid.y
     layers.append(
         pdk.Layer(
             "ScreenGridLayer",
             data=organizations
-            .filter(items=['annual_income', 'lon', 'lat']),
+            .filter(items=['annual_income', 'lon', 'lat'])
+            .dropna(subset=['lon', 'lat']),
             get_position=['lon', 'lat'],
             get_weight='1',
             cell_size_pixels=20,
@@ -156,30 +215,31 @@ if 'Ganancias anuales' in active_modes:
     )
 
 if 'Año de incorporación legal' in active_modes:
-    organization_sectors['lon'] = organization_sectors.centroid.x
-    organization_sectors['lat'] = organization_sectors.centroid.y
-    H3_CLUSTER_LAYER_DATA = "https://raw.githubusercontent.com/visgl/deck.gl-data/master/website/sf.h3clusters.json"
-
-    df = pd.read_json(H3_CLUSTER_LAYER_DATA)
     layers.append(
         pdk.Layer(
             "H3ClusterLayer",
-            df,
+            data=organizations
+            .filter(['legal_incorporation_year', 'lon', 'lat'])
+            .dropna(subset=['lon', 'lat']),
+            get_position=['lon', 'lat'],
             pickable=True,
             stroked=True,
             filled=True,
             extruded=False,
             get_hexagons="hexIds",
             get_fill_color="[255, (1 - mean / 500) * 255, 0]",
-            get_line_color=[255, 255, 255],
+            get_line_color=[246, 51, 102],
             line_width_min_pixels=2,
         )
     )
 
+print(st.get_option('theme.primaryColor'))
 deck = pdk.Deck(
     layers,
     initial_view_state=pdk.ViewState(latitude=25.686613, longitude=-100.316116, zoom=10, max_zoom=16, min_zoom=10),
     tooltip={
-        'html': '<b>{name}</b>',
+        'html': '<b>{name}</b></br>'
+                '{address}</br>'
+                'Año de incorporación: {legal_incorporation_year}',
     })
 st.pydeck_chart(deck)
