@@ -8,7 +8,57 @@ sectors = agebs.dissolve(by='sector_name')
 organizations = gpd.GeoDataFrame(pd.read_pickle('data/organizations.pkl'))
 organization_demographics = pd.read_pickle('data/organization_demographics.pkl')
 organization_profiles = pd.read_pickle('data/organization_profiles.pkl')
-organization_regions = pd.read_pickle('data/organization_regions.pkl')
+organization_sector_names = pd.read_pickle('data/organization_sectors.pkl')
+
+organization_sector_count = organization_sector_names \
+    .groupby(by='organization_name') \
+    .count() \
+    .sector_name
+
+budgets = {
+    '0': 0,
+    'Menos de 500,000': 1,
+    'Entre 500,001 a 1,000,000': 2,
+    'de 1,000,000 a 2,000,000': 3,
+    'de 2,000,000 a 5,000,000': 4,
+    'más de 5,000,000': 5,
+}
+
+organizations = organizations \
+    .join(other=organization_sector_count, on='name') \
+    .rename(columns={
+    'sector_name': 'sector_count'
+}) \
+    .assign(per_sector_budget=organizations
+            .annual_income
+            .apply(lambda x: budgets[x])
+            .astype('float'))
+
+organizations = organizations \
+    .assign(per_sector_budget=organizations.per_sector_budget / organizations.sector_count)
+
+
+organization_sectors = gpd.GeoDataFrame(
+    organization_sector_names
+    .join(other=sectors, on='sector_name', how='inner')
+    .join(other=organizations.set_index('name'), on='organization_name', how='inner', rsuffix='_org')
+)
+organization_sectors[['x', 'y']] = organization_sectors \
+    .to_crs('+proj=cea') \
+    .centroid \
+    .to_crs(agebs.crs) \
+    .get_coordinates()
+
+organization_agebs = gpd.GeoDataFrame(
+    organization_sector_names
+    .join(other=agebs.set_index('sector_name'), on='sector_name', how='inner')
+)
+organization_agebs[['x', 'y']] = organization_agebs \
+    .to_crs('+proj=cea') \
+    .centroid \
+    .to_crs(agebs.crs) \
+    .get_coordinates()
+
 
 ods_labels = {
     'ods1': 'ODS 1',
@@ -40,6 +90,7 @@ active_modes = st.multiselect(
         'Actividad de organizaciones',
         'Sectores',
         'Sectores por organización',
+        'Inversión monetaria por sector',
         'Primer año de operaciones',
         'Ganancias anuales',
         'Cantidad de empleados',
@@ -103,22 +154,25 @@ active_modes = st.multiselect(
 # .join(other=agebs.set_index('sector_name'), on='sector_name', lsuffix='organizations')
 # )
 
-organization_sectors = gpd.GeoDataFrame(
-    organization_regions
-    .join(other=sectors, on='sector_name', how='inner')
-    .join(other=organizations.set_index('name'), on='organization_name', how='inner', rsuffix='_org')
-)
-
-# organization_sector_count = organization_sectors.groupby(by='organization_name')
-# organization_sector_count
-
-organization_sectors['lon'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).x
-organization_sectors['lat'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).y
 
 filtered_sectors = sectors
 
 layers = []
 
+
+if 'Inversión monetaria por sector' in active_modes:
+    layers.append(
+        pdk.Layer(
+            "GeoJsonLayer",
+            data=organization_sectors
+            .filter(items=['geometry', 'per_sector_budget'])
+            .dropna(subset='per_sector_budget'),
+            opacity=0.8,
+            extruded=True,
+            get_fill_color=[255, 255, 64],
+            get_elevation='per_sector_budget'
+        )
+    )
 if 'Sectores por organización' in active_modes:
     selected_org = st.selectbox(
         'Organización a visualizar:',
@@ -161,7 +215,6 @@ if 'Oficinas de organizaciones' in active_modes:
             'height': 128,
             'anchorY': 128,
         }
-
     layers.append(
         pdk.Layer(
             "IconLayer",
@@ -170,7 +223,7 @@ if 'Oficinas de organizaciones' in active_modes:
             get_icon='icon_data',
             get_size=4,
             size_scale=8,
-            get_position=['lon', 'lat'],
+            get_position=['x', 'y'],
             pickable=True,
         )
     )
@@ -179,10 +232,8 @@ if 'Actividad de organizaciones' in active_modes:
     layers.append(
         pdk.Layer(
             "HeatmapLayer",
-            data=organization_sectors
-            .filter(items=['lon', 'lat'])
-            .dropna(subset=['lon', 'lat']),
-            get_position=['lon', 'lat'],
+            data=organization_agebs,
+            get_position=['x', 'y'],
             opacity=0.7,
             intensity=1,
             radius_pixels=100,
@@ -211,9 +262,8 @@ if 'Año de incorporación legal' in active_modes:
         pdk.Layer(
             "H3ClusterLayer",
             data=organizations
-            .filter(['legal_incorporation_year', 'lon', 'lat'])
-            .dropna(subset=['lon', 'lat']),
-            get_position=['lon', 'lat'],
+            .filter(['legal_incorporation_year', 'lon', 'lat']),
+            get_position=['x', 'y'],
             pickable=True,
             stroked=True,
             filled=True,
@@ -225,7 +275,6 @@ if 'Año de incorporación legal' in active_modes:
         )
     )
 
-print(st.get_option('theme.primaryColor'))
 deck = pdk.Deck(
     layers,
     initial_view_state=pdk.ViewState(latitude=25.686613, longitude=-100.316116, zoom=10, max_zoom=16, min_zoom=10),
