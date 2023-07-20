@@ -2,10 +2,9 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
-import numpy as np
 
 agebs = gpd.GeoDataFrame(pd.read_pickle('data/agebs.pkl'))
-sectors = agebs.dissolve(by='sector_name', as_index=False)
+sectors = agebs.dissolve(by='sector_name')
 organizations = gpd.GeoDataFrame(pd.read_pickle('data/organizations.pkl'))
 organization_demographics = pd.read_pickle('data/organization_demographics.pkl')
 organization_profiles = pd.read_pickle('data/organization_profiles.pkl')
@@ -50,7 +49,7 @@ active_modes = st.multiselect(
     default=[
         'Oficinas de organizaciones',
         'Actividad de organizaciones',
-        'Sectores'
+        'Sectores',
     ],
 )
 # ods_choice = st.selectbox(
@@ -104,61 +103,53 @@ active_modes = st.multiselect(
 # .join(other=agebs.set_index('sector_name'), on='sector_name', lsuffix='organizations')
 # )
 
-organization_agebs = gpd.GeoDataFrame(
+organization_sectors = gpd.GeoDataFrame(
     organization_regions
-    .join(other=agebs.set_index('sector_name'), on='sector_name', how='inner')
+    .join(other=sectors, on='sector_name', how='inner')
     .join(other=organizations.set_index('name'), on='organization_name', how='inner', rsuffix='_org')
 )
 
-organization_agebs['lon'] = organization_agebs.to_crs('+proj=cea').centroid.to_crs(organization_agebs.crs).x
-organization_agebs['lat'] = organization_agebs.to_crs('+proj=cea').centroid.to_crs(organization_agebs.crs).y
+# organization_sector_count = organization_sectors.groupby(by='organization_name')
+# organization_sector_count
+
+organization_sectors['lon'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).x
+organization_sectors['lat'] = organization_sectors.to_crs('+proj=cea').centroid.to_crs(organization_sectors.crs).y
+
+filtered_sectors = sectors
 
 layers = []
 
-if 'Sectores por organización' in active_modes or 'Sectores' in active_modes:
-    if 'Sectores por organización' in active_modes:
-        selected_org = st.selectbox(
-            'Organización a visualizar:',
-            organizations.name
-        )
-        filtered = gpd.GeoDataFrame(
-            organization_agebs[organization_agebs['organization_name'] == selected_org]
-            .filter(items=['geometry', 'sector_name'])
-        )
-        selected_sectors = set(filtered.sector_name.unique())
-        all_sectors = set(agebs.sector_name.unique())
+if 'Sectores por organización' in active_modes:
+    selected_org = st.selectbox(
+        'Organización a visualizar:',
+        organizations.name
+    )
+    filtered = gpd.GeoDataFrame(
+        organization_sectors[organization_sectors['organization_name'] == selected_org]
+        .filter(items=['geometry', 'sector_name'])
+    )
 
-        other_sectors = all_sectors.difference(selected_sectors)
-        other_agebs = gpd.GeoDataFrame(
-            agebs[agebs['sector_name'].isin(other_sectors)]
-        )
+    filtered_sectors = filtered_sectors[~filtered_sectors.index.isin(filtered)]
 
-        layers.append(
-            pdk.Layer(
-                "GeoJsonLayer",
-                data=other_agebs,
-                get_fill_color=[128, 128, 128],
-                opacity=0.2,
-            )
+    layers.append(
+        pdk.Layer(
+            "GeoJsonLayer",
+            data=filtered,
+            get_fill_color=primary_color,
+            opacity=0.5
         )
-        layers.append(
-            pdk.Layer(
-                "GeoJsonLayer",
-                data=filtered,
-                get_fill_color=primary_color,
-                opacity=0.5
-            )
+    )
+if 'Sectores' in active_modes:
+    layers.append(
+        pdk.Layer(
+            "GeoJsonLayer",
+            data=filtered_sectors
+            .assign(tooltip_text=sectors.index),
+            get_fill_color=[128, 128, 128],
+            opacity=0.2,
+            pickable=True,
         )
-        layers.append(
-            pdk.Layer(
-                "TextLayer",
-                data=sectors.assign(geometry=sectors.centroid),
-                get_position='geometry.coordinates',
-                size_max_pixels=8,
-                get_text='sector_name',
-                get_color=[255, 255, 255],
-            )
-        )
+    )
 if 'Oficinas de organizaciones' in active_modes:
     organizations_with_icons = organizations \
         .dropna(subset='address')
@@ -174,7 +165,8 @@ if 'Oficinas de organizaciones' in active_modes:
     layers.append(
         pdk.Layer(
             "IconLayer",
-            data=organizations_with_icons,
+            data=organizations_with_icons
+            .assign(tooltip_text=organizations_with_icons.name),
             get_icon='icon_data',
             get_size=4,
             size_scale=8,
@@ -187,7 +179,7 @@ if 'Actividad de organizaciones' in active_modes:
     layers.append(
         pdk.Layer(
             "HeatmapLayer",
-            data=organization_agebs
+            data=organization_sectors
             .filter(items=['lon', 'lat'])
             .dropna(subset=['lon', 'lat']),
             get_position=['lon', 'lat'],
@@ -238,8 +230,6 @@ deck = pdk.Deck(
     layers,
     initial_view_state=pdk.ViewState(latitude=25.686613, longitude=-100.316116, zoom=10, max_zoom=16, min_zoom=10),
     tooltip={
-        'html': '<b>{name}</b></br>'
-                '{address}</br>'
-                'Año de incorporación: {legal_incorporation_year}',
+        'html': '{tooltip_text}',
     })
 st.pydeck_chart(deck)
