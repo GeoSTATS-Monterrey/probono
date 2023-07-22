@@ -10,6 +10,14 @@ organization_demographics = pd.read_pickle('data/organization_demographics.pkl')
 organization_profiles = pd.read_pickle('data/organization_profiles.pkl')
 organization_sector_names = pd.read_pickle('data/organization_sectors.pkl')
 
+excluded_orgs = [
+    'geostats',
+    'asdf',
+]
+
+organizations = organizations[~organizations.name.isin(excluded_orgs)]
+organization_sector_names = organization_sector_names[~organization_sector_names.isin(excluded_orgs)]
+
 organization_sector_count = organization_sector_names \
     .groupby(by='organization_name') \
     .count() \
