@@ -94,7 +94,7 @@ primary_color = [255, 75, 75]
 st.title("Mapa de organizaciones pro-bono")
 
 active_modes = st.multiselect(
-    'Selecciona la informacion de interes que quieres ver: ', [
+    'Selecciona la información de interés que quieres ver: ', [
         'Oficinas de organizaciones',
         'Actividad de organizaciones',
         'Sectores',
