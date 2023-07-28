@@ -20,7 +20,11 @@ pipenv install
 ```
 
 ## Correr el servidor localmente:
+Para correr el servidor de streamlit de manera local se necesita la ubicación desde donde se esta corriento el proyecto al cual llamaremos **TARGET** y se usa el siguiente comando:
 
+```bash
+streamlit run "TARGET"
+```
 
 ## Agregar una categoria:
 Para ello se tendra que modificar el apartado en python de _multiselect_ donde se agregará la nueva categoria.
